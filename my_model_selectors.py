@@ -77,7 +77,31 @@ class SelectorBIC(ModelSelector):
         warnings.filterwarnings("ignore", category=DeprecationWarning)
 
         # TODO implement model selection based on BIC scores
-        raise NotImplementedError
+        best_model = None
+        best_num_components = self.min_n_components
+        best_bic = float('+inf')
+
+        for num_states in range(self.min_n_components, self.max_n_components):
+
+            try:
+                # train model with training set
+                hmm_model = GaussianHMM(n_components=num_states, n_iter=2000).fit(self.X, self.lengths)
+                likelyhood = hmm_model.score(self.X, self.lengths)
+
+                p = num_states ^ 2 + 2 * num_states * hmm_model.n_features - 1
+
+                # now calculate bic
+                bic = -2 * likelyhood + p * np.log(hmm_model.n_features)
+
+                if bic < best_bic:
+                    # new set of best numbers
+                    best_num_components, best_bic, best_model = num_states, bic, hmm_model
+
+            except Exception:
+                # if it fails, it will try again with the next set of elements, or simply return an empty model
+                pass
+
+        return best_model
 
 
 class SelectorDIC(ModelSelector):
@@ -94,7 +118,38 @@ class SelectorDIC(ModelSelector):
         warnings.filterwarnings("ignore", category=DeprecationWarning)
 
         # TODO implement model selection based on DIC scores
-        raise NotImplementedError
+        best_model = None
+        best_num_components = self.min_n_components
+        best_dic = float('-inf')
+
+        # store it for later use
+        logL_list = []
+
+        for num_states in range(self.min_n_components, self.max_n_components):
+
+            try:
+                # train model with training set
+                hmm_model = GaussianHMM(n_components=num_states, n_iter=2000).fit(self.X, self.lengths)
+                likelyhood = hmm_model.score(self.X, self.lengths)
+
+                logL_list.append((num_states, likelyhood, hmm_model))
+
+            except Exception:
+                # ignore the current exception, continue with next
+                pass
+
+        for i in range(0, len(logL_list) - 1):
+
+            num_states, likelyhood, hmm_model = logL_list[i]
+
+            sum_of_others = sum([likelyhood for idx, (num_states, likelyhood, hmm_model) in enumerate(logL_list) if idx != i])
+
+            dic = likelyhood - 1 / (len(logL_list) - 1) * sum_of_others
+
+            if dic > best_dic:
+                best_num_components, best_dic, best_model = num_states, dic, hmm_model
+
+        return best_model
 
 
 class SelectorCV(ModelSelector):
@@ -106,4 +161,59 @@ class SelectorCV(ModelSelector):
         warnings.filterwarnings("ignore", category=DeprecationWarning)
 
         # TODO implement model selection using CV
-        raise NotImplementedError
+        split_method = KFold()
+
+        best_model = None
+        best_num_components = self.min_n_components
+        best_likelyhood = float('-inf')
+
+        # somehow it works only for 2 or more
+        if len(self.sequences) > 2:
+
+            for cv_train_idx, cv_test_idx in split_method.split(self.sequences):
+
+
+                X_train, lengths_train = combine_sequences(cv_train_idx, self.sequences)
+                X_test, lengths_test = combine_sequences(cv_test_idx, self.sequences)
+
+                for num_states in range(self.min_n_components, self.max_n_components):
+
+                    try:
+                        # train
+                        hmm_model = GaussianHMM(n_components=num_states, n_iter=2000).fit(X_train, lengths_train)
+
+                        likelyhood = hmm_model.score(X_test, lengths_test)
+
+                        if likelyhood > best_likelyhood:
+
+                            best_num_components, best_likelyhood, best_model = num_states, likelyhood, hmm_model
+
+                    except Exception:
+                        # if it fails, it will try again with the next set of elements, or simply return an empty model
+                        pass
+
+        else:
+
+            # take first
+            X_train, lengths_train = combine_sequences([0], self.sequences)
+
+            if len(self.sequences) == 2:
+                X_test, lengths_test = combine_sequences([1], self.sequences)
+            else:
+                X_test, lengths_test = combine_sequences([0], self.sequences)
+
+            for num_states in range(self.min_n_components, self.max_n_components):
+
+                try:
+                    # train
+                    hmm_model = GaussianHMM(n_components=num_states, n_iter=2000).fit(X_train, lengths_train)
+                    likelyhood = hmm_model.score(X_test, lengths_test)
+
+                    if likelyhood > best_likelyhood:
+                        best_num_components, likelyhood, best_model = num_states, likelyhood, hmm_model
+
+                except Exception:
+                    # ignore current excetption
+                    pass
+
+        return best_model
